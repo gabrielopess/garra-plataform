@@ -244,6 +244,46 @@ const tools: Anthropic.Tool[] = [
       required: ["direction"],
     },
   },
+  {
+    name: "reset_all_tasks",
+    description:
+      "Zera TODAS as tarefas da semana atual (todos os 7 dias). Use quando o usuário quiser limpar/resetar/zerar todas as tarefas da semana.",
+    input_schema: {
+      type: "object" as const,
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: "reset_all_focus",
+    description:
+      "Zera TODO o tempo de foco da semana atual (todos os 7 dias). Use quando o usuário quiser limpar/resetar/zerar todo o tempo de foco da semana.",
+    input_schema: {
+      type: "object" as const,
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: "reset_all_distractions",
+    description:
+      "Zera TODAS as distrações da semana atual (todas as 6 categorias). Use quando o usuário quiser limpar/resetar/zerar todas as distrações da semana.",
+    input_schema: {
+      type: "object" as const,
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: "reset_entire_week",
+    description:
+      "Zera TODOS os dados da semana atual: tarefas, tempo de foco E distrações. Use quando o usuário quiser limpar/resetar/zerar TUDO da semana, começar do zero, ou limpar todos os gráficos.",
+    input_schema: {
+      type: "object" as const,
+      properties: {},
+      required: [],
+    },
+  },
 ];
 
 function getEffectiveness(day: DayKey): number {
@@ -364,6 +404,58 @@ function processToolCall(
     return {
       result: `Navegando para ${directionNames[direction]}. Os dados serão carregados automaticamente.`,
       navigateWeek: direction,
+    };
+  } else if (toolName === "reset_all_tasks") {
+    // Reset all tasks to zero
+    const dayKeysArr: DayKey[] = ["domingo", "segunda", "terca", "quarta", "quinta", "sexta", "sabado"];
+    dayKeysArr.forEach(day => {
+      weekTasks[day] = { planned: 0, completed: 0 };
+    });
+
+    return {
+      result: "Todas as tarefas da semana foram zeradas (7 dias).",
+      weekTasksChanged: JSON.parse(JSON.stringify(weekTasks)),
+    };
+  } else if (toolName === "reset_all_focus") {
+    // Reset all focus time to zero
+    const dayKeysArr: DayKey[] = ["domingo", "segunda", "terca", "quarta", "quinta", "sexta", "sabado"];
+    dayKeysArr.forEach(day => {
+      focusTime[day] = 0;
+    });
+
+    return {
+      result: "Todo o tempo de foco da semana foi zerado (7 dias).",
+      focusTimeChanged: JSON.parse(JSON.stringify(focusTime)),
+    };
+  } else if (toolName === "reset_all_distractions") {
+    // Reset all distractions to zero
+    const categoryKeys: DistractionKey[] = ["redesSociais", "youtube", "jogos", "streaming", "mensagens", "navegacao"];
+    categoryKeys.forEach(cat => {
+      distractions[cat] = 0;
+    });
+
+    return {
+      result: "Todas as distrações da semana foram zeradas (6 categorias).",
+      distractionsChanged: JSON.parse(JSON.stringify(distractions)),
+    };
+  } else if (toolName === "reset_entire_week") {
+    // Reset everything
+    const dayKeysArr: DayKey[] = ["domingo", "segunda", "terca", "quarta", "quinta", "sexta", "sabado"];
+    dayKeysArr.forEach(day => {
+      weekTasks[day] = { planned: 0, completed: 0 };
+      focusTime[day] = 0;
+    });
+
+    const categoryKeys: DistractionKey[] = ["redesSociais", "youtube", "jogos", "streaming", "mensagens", "navegacao"];
+    categoryKeys.forEach(cat => {
+      distractions[cat] = 0;
+    });
+
+    return {
+      result: "TODOS os dados da semana foram zerados: tarefas (7 dias), tempo de foco (7 dias) e distrações (6 categorias).",
+      weekTasksChanged: JSON.parse(JSON.stringify(weekTasks)),
+      focusTimeChanged: JSON.parse(JSON.stringify(focusTime)),
+      distractionsChanged: JSON.parse(JSON.stringify(distractions)),
     };
   }
 
@@ -513,10 +605,47 @@ ${distractionsSummary}
 - Se o usuário disser "ontem foquei 5 horas", use set_focus_time com o dia de ontem (${yesterdayKey})
 - IMPORTANTE: Se ontem foi em outra semana (ex: hoje é domingo e ontem foi sábado da semana passada), primeiro navegue para a semana anterior com navigate_week("previous"), depois registre os dados
 
+### Para Limpeza/Reset de Dados:
+1. **reset_all_tasks**: Zera todas as tarefas da semana (7 dias)
+2. **reset_all_focus**: Zera todo o tempo de foco da semana (7 dias)
+3. **reset_all_distractions**: Zera todas as distrações da semana (6 categorias)
+4. **reset_entire_week**: Zera TUDO da semana (tarefas + foco + distrações)
+
+### Exemplos de limpeza:
+- "Limpar tudo dessa semana" → reset_entire_week
+- "Zerar todas as tarefas" → reset_all_tasks
+- "Limpar tempo de foco" → reset_all_focus
+- "Resetar distrações" → reset_all_distractions
+- "Limpar os 3 gráficos da semana passada" → navigate_week("previous") DEPOIS reset_entire_week
+
 ### Cores do gráfico de efetividade:
 - Verde: >= 80%
 - Amarelo: >= 50%
 - Vermelho: < 50%
+
+## IMPORTANTE: Comandos Complexos
+
+Você DEVE ser capaz de executar comandos complexos quebrando-os em múltiplas ações. Exemplos:
+
+1. **"Limpar todos os dados da semana passada"**:
+   - Primeiro: navigate_week("previous")
+   - Depois: reset_entire_week
+
+2. **"Zerar tudo e registrar: segunda 5/6, terça 4/5"**:
+   - Primeiro: reset_entire_week
+   - Depois: set_day_tasks para segunda
+   - Depois: set_day_tasks para terça
+
+3. **"Na semana passada, segunda foquei 6h e terça 5h"**:
+   - Primeiro: navigate_week("previous")
+   - Depois: set_focus_time(segunda, 6)
+   - Depois: set_focus_time(terca, 5)
+
+4. **"Limpar distrações e tempo de foco"**:
+   - reset_all_distractions
+   - reset_all_focus
+
+SEMPRE execute TODAS as ações necessárias para completar o pedido do usuário. Não pergunte se ele quer continuar - execute tudo de uma vez.
 
 Responda sempre em português de forma concisa e amigável. Após registrar os dados, mostre um resumo do que foi atualizado. Quando navegar entre semanas, confirme para qual semana você navegou.`;
 
