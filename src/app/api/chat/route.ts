@@ -181,7 +181,7 @@ const tools: Anthropic.Tool[] = [
   {
     name: "add_distraction",
     description:
-      "Adiciona horas de distração a uma categoria específica. Use quando o usuário informar que gastou tempo em uma distração (ex: 'gastei 3 horas em redes sociais', 'perdi 2h no YouTube'). O valor será SOMADO ao total da semana naquela categoria.",
+      "Adiciona ou subtrai horas de distração a uma categoria específica. Use quando o usuário informar que gastou tempo em uma distração (ex: 'gastei 3 horas em redes sociais'). Use valores negativos para subtrair (ex: 'remover 2h de jogos'). O valor será SOMADO ao total da semana naquela categoria.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -192,7 +192,27 @@ const tools: Anthropic.Tool[] = [
         },
         hours: {
           type: "number",
-          description: "Quantidade de horas a adicionar (será somado ao total existente)",
+          description: "Quantidade de horas a adicionar (positivo) ou subtrair (negativo). O resultado final nunca será menor que 0.",
+        },
+      },
+      required: ["category", "hours"],
+    },
+  },
+  {
+    name: "set_distraction",
+    description:
+      "Define o valor exato de horas de distração para uma categoria específica. Use quando o usuário quiser CORRIGIR ou DEFINIR um valor específico (ex: 'redes sociais foi 5 horas', 'zerar jogos', 'colocar youtube em 3h'). Diferente de add_distraction que soma, esta ferramenta SUBSTITUI o valor.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        category: {
+          type: "string",
+          enum: ["redesSociais", "youtube", "jogos", "streaming", "mensagens", "navegacao"],
+          description: "A categoria de distração",
+        },
+        hours: {
+          type: "number",
+          description: "Valor exato de horas para definir na categoria (mínimo 0)",
         },
       },
       required: ["category", "hours"],
@@ -286,12 +306,24 @@ function processToolCall(
     };
   } else if (toolName === "add_distraction") {
     const category = toolInput.category as DistractionKey;
-    const hours = Math.max(0, toolInput.hours as number);
+    const hours = toolInput.hours as number;
 
-    distractions[category] += hours;
+    distractions[category] = Math.max(0, distractions[category] + hours);
+
+    const action = hours >= 0 ? `+${hours}h adicionadas` : `${hours}h removidas`;
 
     return {
-      result: `${distractionNames[category]}: +${hours}h adicionadas (total: ${distractions[category]}h na semana)`,
+      result: `${distractionNames[category]}: ${action} (total: ${distractions[category]}h na semana)`,
+      distractionsChanged: JSON.parse(JSON.stringify(distractions)),
+    };
+  } else if (toolName === "set_distraction") {
+    const category = toolInput.category as DistractionKey;
+    const hours = Math.max(0, toolInput.hours as number);
+
+    distractions[category] = hours;
+
+    return {
+      result: `${distractionNames[category]}: definido para ${hours}h na semana`,
       distractionsChanged: JSON.parse(JSON.stringify(distractions)),
     };
   } else if (toolName === "get_distractions") {
@@ -372,10 +404,15 @@ ${distractionsSummary}
 3. Quando perguntar sobre tempo de foco, use get_focus_time
 
 ### Para Distrações:
-1. Quando o usuário informar tempo gasto em distrações, use add_distraction
-2. O valor será SOMADO ao total existente da categoria (acumulativo na semana)
-3. Se mencionar múltiplas distrações, chame add_distraction para CADA uma
-4. Quando perguntar sobre distrações, use get_distractions
+1. **Adicionar tempo**: use add_distraction com valor positivo (ex: "gastei 3h em jogos")
+2. **Subtrair tempo**: use add_distraction com valor negativo (ex: "remover 2h de jogos" → add_distraction(jogos, -2))
+3. **Definir/Corrigir valor**: use set_distraction para SUBSTITUIR o valor (ex: "redes sociais foi 5h", "zerar youtube")
+4. Se mencionar múltiplas distrações, chame a ferramenta apropriada para CADA uma
+5. Quando perguntar sobre distrações, use get_distractions
+
+### Quando usar cada ferramenta de distrações:
+- **add_distraction**: quando o usuário está ADICIONANDO tempo gasto hoje ("gastei 3h", "perdi 2h")
+- **set_distraction**: quando o usuário quer CORRIGIR ou DEFINIR um valor específico ("foi 5h", "na verdade eram 3h", "zerar", "colocar em 0")
 
 ### Categorias de distrações:
 - **redesSociais**: Redes sociais (Instagram, Twitter/X, TikTok, Facebook, LinkedIn)
@@ -390,6 +427,10 @@ ${distractionsSummary}
 - "Hoje perdi 2h no YouTube e 1h em jogos" → duas chamadas de add_distraction
 - "Fiquei 4h no Instagram" → add_distraction(redesSociais, 4)
 - "Vi séries por 3 horas" → add_distraction(streaming, 3)
+- "Redes sociais foi 5 horas no total" → set_distraction(redesSociais, 5)
+- "Zerar jogos" → set_distraction(jogos, 0)
+- "Remover 2h de youtube" → add_distraction(youtube, -2)
+- "Quero corrigir: streaming era 4h, não 6h" → set_distraction(streaming, 4)
 
 ### Cores do gráfico de efetividade:
 - Verde: >= 80%
