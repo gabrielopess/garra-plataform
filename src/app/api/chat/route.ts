@@ -284,6 +284,22 @@ const tools: Anthropic.Tool[] = [
       required: [],
     },
   },
+  {
+    name: "generate_sample_data",
+    description:
+      "Gera dados de exemplo/genéricos/fictícios para a semana atual. Use quando o usuário pedir para adicionar dados de teste, exemplo, genéricos, fictícios, ou para popular os gráficos com dados. Gera tarefas, tempo de foco e distrações realistas.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        style: {
+          type: "string",
+          enum: ["produtivo", "mediano", "improdutivo", "aleatorio"],
+          description: "Estilo dos dados: 'produtivo' (alta efetividade, muito foco, poucas distrações), 'mediano' (valores médios), 'improdutivo' (baixa efetividade, pouco foco, muitas distrações), 'aleatorio' (valores variados)",
+        },
+      },
+      required: [],
+    },
+  },
 ];
 
 function getEffectiveness(day: DayKey): number {
@@ -457,6 +473,74 @@ function processToolCall(
       focusTimeChanged: JSON.parse(JSON.stringify(focusTime)),
       distractionsChanged: JSON.parse(JSON.stringify(distractions)),
     };
+  } else if (toolName === "generate_sample_data") {
+    const style = (toolInput.style as string) || "aleatorio";
+    const dayKeysArr: DayKey[] = ["domingo", "segunda", "terca", "quarta", "quinta", "sexta", "sabado"];
+    const categoryKeys: DistractionKey[] = ["redesSociais", "youtube", "jogos", "streaming", "mensagens", "navegacao"];
+
+    // Helper to generate random number in range
+    const rand = (min: number, max: number) => Math.floor(Math.random() * (max - min + 1)) + min;
+    const randFloat = (min: number, max: number) => Math.round((Math.random() * (max - min) + min) * 2) / 2;
+
+    if (style === "produtivo") {
+      // High productivity: 80-100% effectiveness, 6-10h focus, low distractions
+      dayKeysArr.forEach(day => {
+        const planned = rand(6, 10);
+        const completed = rand(Math.floor(planned * 0.8), planned);
+        weekTasks[day] = { planned, completed };
+        focusTime[day] = randFloat(6, 10);
+      });
+      categoryKeys.forEach(cat => {
+        distractions[cat] = randFloat(0, 2);
+      });
+    } else if (style === "improdutivo") {
+      // Low productivity: 20-50% effectiveness, 1-4h focus, high distractions
+      dayKeysArr.forEach(day => {
+        const planned = rand(5, 8);
+        const completed = rand(1, Math.floor(planned * 0.5));
+        weekTasks[day] = { planned, completed };
+        focusTime[day] = randFloat(1, 4);
+      });
+      categoryKeys.forEach(cat => {
+        distractions[cat] = randFloat(3, 8);
+      });
+    } else if (style === "mediano") {
+      // Medium productivity: 50-80% effectiveness, 4-7h focus, medium distractions
+      dayKeysArr.forEach(day => {
+        const planned = rand(5, 8);
+        const completed = rand(Math.floor(planned * 0.5), Math.floor(planned * 0.8));
+        weekTasks[day] = { planned, completed };
+        focusTime[day] = randFloat(4, 7);
+      });
+      categoryKeys.forEach(cat => {
+        distractions[cat] = randFloat(1, 4);
+      });
+    } else {
+      // Random/varied
+      dayKeysArr.forEach(day => {
+        const planned = rand(3, 10);
+        const completed = rand(0, planned);
+        weekTasks[day] = { planned, completed };
+        focusTime[day] = randFloat(0, 10);
+      });
+      categoryKeys.forEach(cat => {
+        distractions[cat] = randFloat(0, 6);
+      });
+    }
+
+    const styleNames: Record<string, string> = {
+      produtivo: "produtivo (alta efetividade)",
+      improdutivo: "improdutivo (baixa efetividade)",
+      mediano: "mediano (efetividade média)",
+      aleatorio: "aleatório (valores variados)",
+    };
+
+    return {
+      result: `Dados de exemplo gerados no estilo ${styleNames[style]}. Tarefas, tempo de foco e distrações foram preenchidos para os 7 dias.`,
+      weekTasksChanged: JSON.parse(JSON.stringify(weekTasks)),
+      focusTimeChanged: JSON.parse(JSON.stringify(focusTime)),
+      distractionsChanged: JSON.parse(JSON.stringify(distractions)),
+    };
   }
 
   return { result: "Ferramenta não encontrada" };
@@ -618,6 +702,17 @@ ${distractionsSummary}
 - "Resetar distrações" → reset_all_distractions
 - "Limpar os 3 gráficos da semana passada" → navigate_week("previous") DEPOIS reset_entire_week
 
+### Para Gerar Dados de Exemplo:
+- **generate_sample_data**: Gera dados fictícios/de teste para a semana atual
+- Estilos disponíveis: "produtivo", "mediano", "improdutivo", "aleatorio"
+
+### Exemplos de geração de dados:
+- "Adicionar dados de exemplo" → generate_sample_data()
+- "Popular com dados de teste" → generate_sample_data()
+- "Colocar dados genéricos" → generate_sample_data()
+- "Dados produtivos" → generate_sample_data("produtivo")
+- "Simular semana ruim" → generate_sample_data("improdutivo")
+
 ### Cores do gráfico de efetividade:
 - Verde: >= 80%
 - Amarelo: >= 50%
@@ -645,7 +740,19 @@ Você DEVE ser capaz de executar comandos complexos quebrando-os em múltiplas a
    - reset_all_distractions
    - reset_all_focus
 
-SEMPRE execute TODAS as ações necessárias para completar o pedido do usuário. Não pergunte se ele quer continuar - execute tudo de uma vez.
+5. **"Adicionar dados genéricos para semana passada e atual"**:
+   - Primeiro: generate_sample_data() para semana atual
+   - Depois: navigate_week("previous")
+   - Depois: generate_sample_data() para semana passada
+   - Depois: navigate_week("current") para voltar
+
+6. **"Popular as duas últimas semanas com dados de teste"**:
+   - generate_sample_data() na atual
+   - navigate_week("previous")
+   - generate_sample_data() na anterior
+   - navigate_week("current")
+
+SEMPRE execute TODAS as ações necessárias para completar o pedido do usuário. Não pergunte se ele quer continuar - execute tudo de uma vez. Se o usuário pedir para fazer algo em múltiplas semanas, navegue entre elas e execute as ações em cada uma.
 
 Responda sempre em português de forma concisa e amigável. Após registrar os dados, mostre um resumo do que foi atualizado. Quando navegar entre semanas, confirme para qual semana você navegou.`;
 
