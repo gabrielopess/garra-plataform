@@ -228,6 +228,22 @@ const tools: Anthropic.Tool[] = [
       required: [],
     },
   },
+  {
+    name: "navigate_week",
+    description:
+      "Navega para uma semana diferente para visualizar ou editar dados. Use quando o usuário mencionar 'semana passada', 'semana anterior', 'próxima semana', 'voltar uma semana', ou 'semana atual'. Os dados da semana navegada serão carregados automaticamente.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        direction: {
+          type: "string",
+          enum: ["previous", "next", "current"],
+          description: "Direção da navegação: 'previous' (semana passada), 'next' (próxima semana), 'current' (voltar para semana atual)",
+        },
+      },
+      required: ["direction"],
+    },
+  },
 ];
 
 function getEffectiveness(day: DayKey): number {
@@ -239,7 +255,7 @@ function getEffectiveness(day: DayKey): number {
 function processToolCall(
   toolName: string,
   toolInput: Record<string, unknown>
-): { result: string; weekTasksChanged?: WeekTasks; focusTimeChanged?: FocusTime; distractionsChanged?: Distractions } {
+): { result: string; weekTasksChanged?: WeekTasks; focusTimeChanged?: FocusTime; distractionsChanged?: Distractions; navigateWeek?: "previous" | "next" | "current" } {
   if (toolName === "set_day_tasks") {
     const day = toolInput.day as DayKey;
     const planned = toolInput.planned as number | undefined;
@@ -336,6 +352,19 @@ function processToolCall(
     return {
       result: `Distrações da semana:\n${summary}\n\nTotal: ${total}h`,
     };
+  } else if (toolName === "navigate_week") {
+    const direction = toolInput.direction as "previous" | "next" | "current";
+
+    const directionNames = {
+      previous: "semana anterior",
+      next: "próxima semana",
+      current: "semana atual",
+    };
+
+    return {
+      result: `Navegando para ${directionNames[direction]}. Os dados serão carregados automaticamente.`,
+      navigateWeek: direction,
+    };
   }
 
   return { result: "Ferramenta não encontrada" };
@@ -343,7 +372,15 @@ function processToolCall(
 
 export async function POST(request: NextRequest) {
   try {
-    const { messages, weekTasks: clientWeekTasks, focusTime: clientFocusTime, distractions: clientDistractions } = await request.json();
+    const {
+      messages,
+      weekTasks: clientWeekTasks,
+      focusTime: clientFocusTime,
+      distractions: clientDistractions,
+      currentDate,
+      currentWeekRange,
+      isCurrentWeek,
+    } = await request.json();
 
     if (clientWeekTasks) {
       weekTasks = clientWeekTasks;
@@ -356,6 +393,27 @@ export async function POST(request: NextRequest) {
     if (clientDistractions) {
       distractions = clientDistractions;
     }
+
+    // Parse current date info
+    const now = currentDate ? new Date(currentDate) : new Date();
+    const dayOfWeek = now.getDay();
+    const dayKeyMap: DayKey[] = ["domingo", "segunda", "terca", "quarta", "quinta", "sexta", "sabado"];
+    const todayKey = dayKeyMap[dayOfWeek];
+    const todayName = dayNames[todayKey];
+
+    // Calculate yesterday
+    const yesterday = new Date(now);
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayDayOfWeek = yesterday.getDay();
+    const yesterdayKey = dayKeyMap[yesterdayDayOfWeek];
+    const yesterdayName = dayNames[yesterdayKey];
+
+    const dateStr = now.toLocaleDateString("pt-BR", {
+      weekday: "long",
+      day: "numeric",
+      month: "long",
+      year: "numeric"
+    });
 
     const weekSummary = Object.entries(weekTasks)
       .map(([day, data]) => {
@@ -374,12 +432,22 @@ export async function POST(request: NextRequest) {
 
     const totalDistractions = Object.values(distractions).reduce((sum, h) => sum + h, 0);
 
+    const weekContext = isCurrentWeek
+      ? `Você está visualizando a **semana atual** (${currentWeekRange}).`
+      : `Você está visualizando uma **semana passada ou futura** (${currentWeekRange}). Use navigate_week("current") para voltar à semana atual.`;
+
     const systemPrompt = `Você é um assistente que ajuda o usuário a rastrear sua produtividade diária através de três métricas:
 1. **Efetividade de Tarefas**: tarefas planejadas vs completadas
 2. **Tempo de Foco**: horas dedicadas ao trabalho focado por dia (0-24h)
 3. **Distrações**: horas gastas em distrações durante a semana (acumulativo)
 
-## Dados atuais da semana
+## Contexto de Data e Hora
+- **Data atual**: ${dateStr}
+- **Hoje**: ${todayName} (${todayKey})
+- **Ontem**: ${yesterdayName} (${yesterdayKey})
+- ${weekContext}
+
+## Dados da semana visualizada (${currentWeekRange || "semana atual"})
 
 ### Tarefas:
 ${weekSummary}
@@ -432,12 +500,25 @@ ${distractionsSummary}
 - "Remover 2h de youtube" → add_distraction(youtube, -2)
 - "Quero corrigir: streaming era 4h, não 6h" → set_distraction(streaming, 4)
 
+### Para Navegação entre Semanas:
+1. Quando o usuário mencionar "semana passada", "semana anterior", use navigate_week("previous")
+2. Quando mencionar "próxima semana", use navigate_week("next")
+3. Quando mencionar "voltar para hoje", "semana atual", use navigate_week("current")
+4. Após navegar, informe o usuário que os dados da nova semana foram carregados
+
+### Interpretação de Datas:
+- "Hoje" = ${todayName} (use ${todayKey})
+- "Ontem" = ${yesterdayName} (use ${yesterdayKey})
+- Se o usuário disser "hoje gastei 3h em jogos", use add_distraction com a categoria apropriada
+- Se o usuário disser "ontem foquei 5 horas", use set_focus_time com o dia de ontem (${yesterdayKey})
+- IMPORTANTE: Se ontem foi em outra semana (ex: hoje é domingo e ontem foi sábado da semana passada), primeiro navegue para a semana anterior com navigate_week("previous"), depois registre os dados
+
 ### Cores do gráfico de efetividade:
 - Verde: >= 80%
 - Amarelo: >= 50%
 - Vermelho: < 50%
 
-Responda sempre em português de forma concisa e amigável. Após registrar os dados, mostre um resumo do que foi atualizado.`;
+Responda sempre em português de forma concisa e amigável. Após registrar os dados, mostre um resumo do que foi atualizado. Quando navegar entre semanas, confirme para qual semana você navegou.`;
 
     let response = await anthropic.messages.create({
       model: "claude-haiku-4-5-20251001",
@@ -450,6 +531,7 @@ Responda sempre em português de forma concisa e amigável. Após registrar os d
     let weekTasksChanged: WeekTasks | undefined;
     let focusTimeChanged: FocusTime | undefined;
     let distractionsChanged: Distractions | undefined;
+    let navigateWeek: "previous" | "next" | "current" | undefined;
 
     while (response.stop_reason === "tool_use") {
       // Find ALL tool_use blocks in the response (for multiple tool calls)
@@ -480,6 +562,10 @@ Responda sempre em português de forma concisa e amigável. Após registrar os d
 
         if (toolResult.distractionsChanged) {
           distractionsChanged = toolResult.distractionsChanged;
+        }
+
+        if (toolResult.navigateWeek) {
+          navigateWeek = toolResult.navigateWeek;
         }
 
         return {
@@ -518,6 +604,7 @@ Responda sempre em português de forma concisa e amigável. Após registrar os d
       weekTasksChanged: weekTasksChanged,
       focusTimeChanged: focusTimeChanged,
       distractionsChanged: distractionsChanged,
+      navigateWeek: navigateWeek,
     });
   } catch (error) {
     console.error("Error:", error);

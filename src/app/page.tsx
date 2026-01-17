@@ -320,7 +320,15 @@ export default function Home() {
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: newMessages, weekTasks, focusTime, distractions }),
+        body: JSON.stringify({
+          messages: newMessages,
+          weekTasks,
+          focusTime,
+          distractions,
+          currentDate: new Date().toISOString(),
+          currentWeekRange: formatWeekRange(currentWeekDate),
+          isCurrentWeek: isCurrentWeek,
+        }),
       });
 
       const data = await response.json();
@@ -335,6 +343,17 @@ export default function Home() {
 
       if (data.distractionsChanged) {
         setDistractions(data.distractionsChanged);
+      }
+
+      // Handle week navigation from agent
+      if (data.navigateWeek) {
+        if (data.navigateWeek === "previous") {
+          goToPreviousWeek();
+        } else if (data.navigateWeek === "next") {
+          goToNextWeek();
+        } else if (data.navigateWeek === "current") {
+          goToCurrentWeek();
+        }
       }
 
       if (data.message) {
